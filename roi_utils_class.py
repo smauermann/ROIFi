@@ -27,7 +27,12 @@ class ROIFinder:
     N_CPUS = os.cpu_count()
 
     def __init__(self, volumes=None, r_threshold=R_THRESHOLD,
-                 p_threshold=P_TRESHOLD, n_jobs=1):
+                 p_threshold=P_TRESHOLD, n_jobs=1, min_cluster_size=2,
+                 random_seed=None):
+
+        if random_seed is not None:
+                np.random.seed(random_seed)
+
         if volumes is not None:
             # check if volumes are provided as 4d array or list of 3d arrays
             if isinstance(volumes, np.ndarray):
@@ -46,6 +51,8 @@ class ROIFinder:
         self.r_threshold = r_threshold
         # arbitrary threshold for p-value of pearson test
         self.p_threshold = p_threshold
+        # filter out clusters smaller than that
+        self.min_cluster_size = min_cluster_size
         # number of jobs for multiprocessing
         self.n_jobs = n_jobs if n_jobs <= self.N_CPUS else self.N_CPUS
         # array that contains integers that indicate clusters
@@ -89,40 +96,45 @@ class ROIFinder:
         return np.array([v[index] for v in self.volumes])
 
     def compute_correlation(self, center_voxels, neighbor_voxels):
-        pearson_scores = dict()
+        correlation_scores = dict()
         for key, val in neighbor_voxels.items():
             r, p = pearsonr(center_voxels, val)
+            # filter according to threshold levels for r and p
             if (abs(r) > self.r_threshold) and (p <= self.p_threshold):
-                pearson_scores[key] = r, p
-        return pearson_scores
+                correlation_scores[key] = r, p
+        return correlation_scores
 
     def update_cluster_array(self, correlation_scores, center_idx,
                              neighbor_indices):
-        for key, val in correlation_scores.items():
-            idx = tuple(neighbor_indices[key])
-            r, p = val
-            # todo --> mark individual clusters with different integers
-            # maybe filter out clusters that only span 2 voxels
-            self.cluster_array[idx] = 1
-            if self.cluster_array[center_idx] == 0:
-                self.cluster_array[center_idx] = 1
+        # check how many values are stored in the correlation array and filter
+        # out cluster that are smaller than the threshold
+        if len(correlation_scores) >= self.min_cluster_size:
+            for key, val in correlation_scores.items():
+                r, p = val
+                idx = tuple(neighbor_indices[key])
+                # todo --> mark individual clusters with different integers
+                # maybe filter out clusters that only span 2 voxels
+                self.cluster_array[idx] = 1
+                self.cluster_array[center_idx] = 2
 
-    def find_rois(self):
+            # if self.cluster_array[center_idx] == 0:
+            #     self.cluster_array[center_idx] = 2
+
+    def find_clusters(self):
         if self.n_jobs >= 1:
             for index in np.ndindex(self.volume_shape):
-                self._compute_rois(index)
+                self._compute_clusters(index)
         # elif self.n_jobs > 1:
 
             # try:
             #     pool = Pool(processes=self.n_jobs)
-            #     pool.map(self._compute_rois, [index for index in
+            #     pool.map(self._compute_clusters, [index for index in
             #                                   np.ndindex(self.volume_shape)])
             # finally:
             #     pool.close()
             #     pool.join()
 
-    def _compute_rois(self, index):
-        # print(index)
+    def _compute_clusters(self, index):
         # collect center voxel from all volumes
         center_index = index
         center_voxels = self.get_voxels(center_index)
@@ -164,12 +176,24 @@ class ROIFinder:
         return ax
 
 if __name__ == '__main__':
-    np.random.seed(42)
-    rf_single = ROIFinder(volumes=20)
+    dim=10
+    RF = ROIFinder(volumes=dim, r_threshold=0.5, p_threshold=0.05,
+                   min_cluster_size=2)
     start = timer()
-    rois_single = rf_single.find_rois()
+    clusters = RF.find_clusters()
     end = timer()
-    print((end - start))
+    #print((end - start))
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')
-    rf_single.draw_clusters(ax=ax, cubes=True)
+    RF.draw_clusters(ax=ax, cubes=True)
+    ax.set_xlabel('Depth (x)')
+    ax.set_xlim(0, dim)
+    ax.invert_xaxis()
+
+    ax.set_ylabel('Columns (y)')
+    ax.set_ylim(0, dim)
+
+    ax.set_zlabel('Rows (z)')
+    ax.set_zlim(0, dim)
+    ax.invert_zaxis()
+    print(RF.cluster_array)
