@@ -53,10 +53,12 @@ class ROIFinder:
         self.p_threshold = p_threshold
         # filter out clusters smaller than that
         self.min_cluster_size = min_cluster_size
-        # number of jobs for multiprocessing
-        self.n_jobs = n_jobs if n_jobs <= self.N_CPUS else self.N_CPUS
+        # keeps track of number of different clusters
+        self.cluster_count = 0
         # array that contains integers that indicate clusters
         self.cluster_array = np.zeros(self.volume_shape, dtype=int)
+        # number of jobs for multiprocessing
+        self.n_jobs = n_jobs if n_jobs <= self.N_CPUS else self.N_CPUS
 
     @staticmethod
     def make_toy_data(dim=TOY_DIM, n_subjects=N_TOY_SUBJECTS,
@@ -107,8 +109,9 @@ class ROIFinder:
     def update_cluster_array(self, correlation_scores, center_idx,
                              neighbor_indices):
         # check how many values are stored in the correlation array and filter
-        # out cluster that are smaller than the threshold
+        # out clusters that are smaller than the threshold
         if len(correlation_scores) >= self.min_cluster_size:
+            self.cluster_count += 1
             for key, val in correlation_scores.items():
                 r, p = val
                 idx = tuple(neighbor_indices[key])
@@ -125,7 +128,6 @@ class ROIFinder:
             for index in np.ndindex(self.volume_shape):
                 self._compute_clusters(index)
         # elif self.n_jobs > 1:
-
             # try:
             #     pool = Pool(processes=self.n_jobs)
             #     pool.map(self._compute_clusters, [index for index in
