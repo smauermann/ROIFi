@@ -1,7 +1,6 @@
 import os
 from itertools import combinations, product
 from multiprocessing import Pool
-from timeit import default_timer as timer
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,7 +19,7 @@ class ROIFinder:
     DIRECTIONS = dict(front=np.array([-1, 0, 0]), back=np.array([1, 0, 0]),
                       top=np.array([0, -1, 0]), bottom=np.array([0, 1, 0]),
                       left=np.array([0, 0, -1]), right=np.array([0, 0, 1]))
-    # directions for reaching every voxel around the center with radius 1,
+    # directions for reaching every adjacent voxel around the center,
     # voxels covered in DIRECTIONS are excluded
     MORE_DIRECTIONS = dict(top1=np.array([0, -1, -1]),
                            top2=np.array([0, -1, 1]),
@@ -49,10 +48,10 @@ class ROIFinder:
     def __init__(self, volumes=None, r_threshold=0.5,
                  p_threshold=None, n_jobs=1, min_cluster_size=None,
                  random_seed=None):
-
+        # set random seed if needed
         if random_seed is not None:
                 np.random.seed(random_seed)
-
+        # check dtype of provided volumes, generate toy data if needed
         if volumes is not None:
             # check if volumes are provided as 4d array or list of 3d arrays
             if isinstance(volumes, np.ndarray):
@@ -64,7 +63,6 @@ class ROIFinder:
                 self.volumes = self.make_toy_data(dim=volumes)
         elif volumes is None:
             self.volumes = self.make_toy_data()
-
         # shape of the first volume, assumes all volumes have same shape
         self.volume_shape = self.volumes[0].shape
         # number of subjects
@@ -91,16 +89,17 @@ class ROIFinder:
                        low for _ in range(n_subjects)]
         return toy_volumes
 
-    def get_neighbor_indices(self, center_index, diagonals=False):
+    def get_neighbor_indices(self, center_index, all_directions=False):
         center = list(center_index)
         neighbor_indices = dict()
-        directions = (self.DIRECTIONS if diagonals is False
+        directions = (self.DIRECTIONS if all_directions is False
                       else self.ALL_DIRECTIONS)
         for key, val in directions.items():
             coord = np.array(center) + val
             coord = self._index_check(coord)
             if coord is not None:
                 neighbor_indices[key] = coord
+        # returns dict with valid indices of adjacent cells
         return neighbor_indices
 
     def _index_check(self, indices):
@@ -148,25 +147,40 @@ class ROIFinder:
         elif self.min_cluster_size is None:
             self._update_cluster_util(correlation_scores, center_idx,
                                       neighbor_indices)
-        self.cluster_count += 1
 
     def _update_cluster_util(self, correlation_scores, center_idx,
                              neighbor_indices):
-        for key, val in correlation_scores.items():
-            r, p = val
-            idx = tuple(neighbor_indices[key])
-            # todo --> mark individual clusters with different integers
-            self.cluster_array[idx] = 1
-            self.cluster_array[center_idx] = 1
+        for key in correlation_scores.keys():
+            index = tuple(neighbor_indices[key])
+            # if no clusters are adjacent
+            if not self._check_adjacent_clusters(index):
+                self.cluster_count += 1
+                self.cluster_array[index] = self.cluster_count
+                self.cluster_array[center_idx] = self.cluster_count
+            else:
+                if self.cluster_count == 0:
+                    self.cluster_count = 1
+                self.cluster_array[index] = self.cluster_count
+                self.cluster_array[center_idx] = self.cluster_count
 
-    def check_for_adjacent_clusters(self, index):
+    def _check_adjacent_clusters(self, index):
         # get indices off ALL surrounding voxels
-        neighbor_indices = self.get_neighbor_indices(index, diagonals=True)
+        all_neighbor_indices = self.get_neighbor_indices(index, all_directions=True)
+        # loop over all adjacent indices and check whether current voxel
+        # is part of a larger cluster
+        for val in all_neighbor_indices.values():
+            index = tuple(val)
+            # print(self.cluster_array[index])
+            if self.cluster_array[index] != 0:
+                return True
+        return False
 
     def find_clusters(self):
         if self.n_jobs >= 1:
             for index in np.ndindex(self.volume_shape):
                 self._compute_clusters(index)
+        # figure out multiprocessing if necessary
+        # doesnt work as it is now
         # elif self.n_jobs > 1:
             # try:
             #     pool = Pool(processes=self.n_jobs)
@@ -196,37 +210,38 @@ class ROIFinder:
         else:
             ax = ax
         x, z, y = self.cluster_array.nonzero()
+        cluster_labels = list(np.sort(self.cluster_array[np.nonzero(self.cluster_array)]))
         if not cubes:
-            ax.scatter(x, y, z, zdir='z', c='red')
+            ax.scatter(x, y, z, zdir='z', c=cluster_labels)
         elif cubes:
             cube_coords = list(np.vstack([x, y, z]).T)
             for c in cube_coords:
-                self._draw_cube(c, ax=ax)
+                self._draw_cube(c, ax, cluster_labels)
         return ax
 
     @staticmethod
-    def _draw_cube(coords, ax):
+    def _draw_cube(coords, ax, cluster_labels):
         x, y, z = tuple(coords)
         x_span = [x, x + 1]
         y_span = [y, y + 1]
         z_span = [z, z - 1]
-        for s, e in combinations(np.array(list(product(x_span,
-                                                       y_span,
-                                                       z_span))), 2):
+        for s, e in combinations(np.array(list(product(x_span, y_span, z_span))), 2):
             if np.sum(np.abs(s - e)) == 1:
-                ax.plot(*zip(s, e), color="black")
+                ax.plot(*zip(s, e), color=cluster_labels)
         return ax
 
 if __name__ == '__main__':
+    from timeit import default_timer as timer
+
     dim = 10
-    RF = ROIFinder(volumes=dim, r_threshold=0.5, min_cluster_size=7)
+    RF = ROIFinder(volumes=dim, r_threshold=0.8, min_cluster_size=4)
     # start = timer()
     clusters = RF.find_clusters()
     # end = timer()
     # print((end - start))
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')
-    RF.draw_clusters(ax=ax, cubes=True)
+    RF.draw_clusters(ax=ax, cubes=False)
     ax.set_xlabel('Depth (x)')
     ax.set_xlim(0, dim)
     ax.invert_xaxis()
@@ -237,3 +252,4 @@ if __name__ == '__main__':
     ax.set_zlabel('Rows (z)')
     ax.set_zlim(0, dim)
     ax.invert_zaxis()
+    #print(RF.cluster_array)
