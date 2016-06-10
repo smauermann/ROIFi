@@ -252,4 +252,4 @@ if __name__ == '__main__':
     ax.set_zlabel('Rows (z)')
     ax.set_zlim(0, dim)
     ax.invert_zaxis()
-    #print(RF.cluster_array)
+    print(RF.cluster_array)
