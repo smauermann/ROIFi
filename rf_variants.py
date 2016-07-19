@@ -5,21 +5,22 @@ from scipy.stats import pearsonr
 from sklearn.feature_extraction.image import grid_to_graph
 from sklearn.manifold import spectral_embedding
 
-from roi_finder_base import ROIFinderBase
+from rf_base import ROIFinderBaseClass
 
 try:
     import cPickle as pickle
 except:
     import pickle
 
-class SpectralClustering(ROIFinderBase):
+
+class SpectralClustering(ROIFinderBaseClass):
     def __init__(self, volumes=None, mask_img=None, random_seed=None):
         super().__init__(volumes, mask_img, random_seed)
         self.connectivity_matrix = None
         self.adjacency_matrix = None
 
-    def make_toy_data(self, dim):
-        print('SubClass toy')
+    # def make_toy_data(self, dim=None):
+    #     print('SubClass toy')
 
     def find_clusters(self):
         if self.n_jobs >= 1:
@@ -31,35 +32,6 @@ class SpectralClustering(ROIFinderBase):
             ic, jc = self.connectivity_matrix.nonzero()
         # elif self.n_jobs > 1:
             # figure out multiprocessing if necessary
-
-    def compute_clusters(self, center_index):
-        # collect center voxel from all volumes
-        center_voxels = self.get_voxels(center_index)
-        # get neighboring voxel indices
-        neighbor_indices = self.get_neighbor_indices(center_index)
-        # extract voxel values for neighbors
-        neighbor_voxels = self.get_neighbor_voxels(neighbor_indices)
-        # Pearson with surrounding voxels
-        correlation_scores = self.compute_correlation(center_voxels,
-                                                      neighbor_voxels)
-        # write changes to the cluster_array
-        self.update_cluster_array(correlation_scores, center_index,
-                                  neighbor_indices)
-
-    def compute_correlation(self, center_voxels, neighbor_voxels):
-        correlation_scores = dict()
-        for key, val in neighbor_voxels.items():
-            r, p = pearsonr(center_voxels, val)
-            # filter according to threshold levels for r and p
-            # p values are not entirely reliable according to documentation
-            # only for datasets larger than 500
-            if r >= self.r_threshold:
-                if self.p_threshold is not None:
-                    if p <= self.p_threshold:
-                        correlation_scores[key] = r, p
-                else:
-                    correlation_scores[key] = r, p
-        return correlation_scores
 
     def pearson_method(self, r_threshold=0.5):
         # According to Craddock et al. (2012)
@@ -91,7 +63,7 @@ class SpectralClustering(ROIFinderBase):
         return euclid_distance_square / (2 * sigma_square)
 
 
-class PearsonMerger(ROIFinderBase):
+class PearsonMerger(ROIFinderBaseClass):
     def __init__(self, volumes=None, mask_img=None, random_seed=None):
         super().__init__(volumes, mask_img, random_seed)
 
