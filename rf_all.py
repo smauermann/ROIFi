@@ -104,20 +104,22 @@ class ROIFinderBaseClass:
         # dict containing information about clusters and metadata of analysis
         self.metadata = dict()
 
-    def make_toy_data(self, dim=20):
+    def make_toy_data(self, dim=8):
         n_subjects = 100
-        noise = np.random.rand(dim, dim, dim, n_subjects)
         sub_dim = dim // 2
-        sub_voxels = sub_dim ** 3
 
-        noise[:sub_dim, :sub_dim, :sub_dim] += np.random.rand(100)
-        # noise[:sub_dim, sub_dim:, :sub_dim] += np.random.rand(100)
-        # noise[:sub_dim, sub_dim:, sub_dim:] += np.random.rand(100)
-        # noise[:sub_dim, :sub_dim, sub_dim:] += np.random.rand(100)
-        # noise[sub_dim:, :sub_dim, :sub_dim] += np.random.rand(100)
-        # noise[sub_dim:, sub_dim:, :sub_dim] += np.random.rand(100)
-        noise[sub_dim:, sub_dim:, sub_dim:] += np.random.rand(100)
-        # noise[sub_dim:, :sub_dim, sub_dim:] += np.random.rand(100)
+        # noise array for all samples
+        noise = np.random.rand(dim, dim, dim, n_subjects)
+
+        # add a signal to each of the 8 sub cubes here
+        noise[:sub_dim, :sub_dim, :sub_dim] += np.random.rand(n_subjects)
+        # noise[:sub_dim, sub_dim:, :sub_dim] += np.random.rand(n_subjects)
+        # noise[:sub_dim, sub_dim:, sub_dim:] += np.random.rand(n_subjects)
+        # noise[:sub_dim, :sub_dim, sub_dim:] += np.random.rand(n_subjects)
+        # noise[sub_dim:, :sub_dim, :sub_dim] += np.random.rand(n_subjects)
+        # noise[sub_dim:, sub_dim:, :sub_dim] += np.random.rand(n_subjects)
+        noise[sub_dim:, sub_dim:, sub_dim:] += np.random.rand(n_subjects)
+        # noise[sub_dim:, :sub_dim, sub_dim:] += np.random.rand(n_subjects)
 
         # make list of 3d arrays
         return [noise[..., s] for s in range(n_subjects)]
@@ -254,6 +256,8 @@ class ROIFinderBaseClass:
     def save_results(self):
         raise NotImplementedError
 
+    def __str__(self):
+        return str(self.__class__.__name__)
 
 class SpectralClustering(ROIFinderBaseClass):
     def __init__(self, volumes=None, mask_img=None, random_seed=None):
@@ -348,25 +352,8 @@ class PearsonMerger(ROIFinderBaseClass):
                     correlation_scores[key] = r, p
         return correlation_scores
 
-    def make_correlation_histogram(self):
-        pass
-
     def update_cluster_array(self, correlation_scores, center_idx,
                              neighbor_indices):
-        # check how many values are stored in the correlation array and filter
-        # out clusters that are smaller than the threshold
-        if self.min_cluster_size is not None:
-            # +1 for the center voxel
-            if len(correlation_scores) + 1 >= self.min_cluster_size:
-                self.update_cluster_util(correlation_scores, center_idx,
-                                         neighbor_indices)
-        # no cluster size filtering
-        else:
-            self.update_cluster_util(correlation_scores, center_idx,
-                                     neighbor_indices)
-
-    def update_cluster_util(self, correlation_scores, center_idx,
-                            neighbor_indices):
         for key in correlation_scores.keys():
             index = tuple(neighbor_indices[key])
             # if no cluster is adjacent
@@ -393,20 +380,31 @@ class PearsonMerger(ROIFinderBaseClass):
         return False
 
     def update_metadata(self):
-        self.metadata['r_threshold'] = self.r_threshold
-        self.metadata['p_threshold'] = self.p_threshold
-        self.metadata['min_cluster_size'] = self.min_cluster_size
+        self.metadata['r_thresh'] = self.r_threshold
+        self.metadata['p_thresh'] = self.p_threshold
+
+        # filter out cluster smaller than threshold
+        if self.min_cluster_size is not None:
+            self.metadata['min_cluster_size'] = self.min_cluster_size
+            # loop over clusters
+            for i in range(1, self.cluster_count + 1):
+                cluster_size = np.where(self.cluster_array == i)[0].size
+                cluster_ids = np.where(self.cluster_array == i)
+                # if cluster below limit set it to np.nan in cluster_array
+                if cluster_size < self.min_cluster_size:
+                    cluster_ids = np.where(self.cluster_array == i)
+                    self.cluster_array[cluster_ids] = np.nan
+                    self.cluster_count -= 1
+                # add entries to metadata dict
+                cluster_id = "size_cluster_%d" % (i)
+                self.metadata[cluster_id] = cluster_size
+        else:
+            for i in range(1, self.cluster_count + 1):
+                cluster_size = np.where(self.cluster_array == i)[0].size
+                cluster_id = "size_cluster_%d" % (i)
+                self.metadata[cluster_id] = cluster_size
+
         self.metadata['cluster_count'] = self.cluster_count
-
-        # loop over all clusters and get size
-        for i in range(1, self.cluster_count + 1):
-            cluster_id = "size_cluster_%d" % (i)
-            cluster_size = np.where(self.cluster_array == i)[0].size
-            self.metadata[cluster_id] = cluster_size
-
-    def check_clusters_again():
-        # control if some detected clusters need to be merged
-        pass
 
     def save_results(self, output_path):
         timestamp = strftime('%d%m%y_%H%M', localtime())
