@@ -49,6 +49,7 @@ class ROIFinderBaseClass:
     N_CPUS = os.cpu_count()
 
     def __init__(self, volumes=None, mask_img=None, random_seed=None):
+        print('\n##### %s #####' % self.__class__.__name__)
         # following None value variables get actual values in the run() method
         # arbitrary threshold for pearson coefficient
         self.r_threshold = None
@@ -172,6 +173,7 @@ class ROIFinderBaseClass:
             raise FileNotFoundError('No .nii-files in %s!' % (path_to_dir))
 
     def apply_masking(self):
+        print("Applying mask ...")
         # check if mask and volumes have same shape
         if self.volume_shape == self.mask.shape:
             # switch ones and zeros because np.MaskedArray masks values if true (=1)
@@ -198,11 +200,12 @@ class ROIFinderBaseClass:
         # number of jobs for multiprocessing
         self.n_jobs = n_jobs if n_jobs <= self.N_CPUS else self.N_CPUS
 
-        print('\nFinding ROIs ...')
+        print('Finding ROIs ...')
         self.find_clusters()
         self.update_metadata()
-        print('Analysis completed!')
-
+        print('\nAnalysis completed!')
+        for key in sorted(self.metadata):
+            print(key, self.metadata[key])
         # print('Found %s cluster(s) with size:' % (self.cluster_count))
         # keys_cluster_sizes = sorted([key for key in self.metadata.keys() if
         #                              key.startswith('size_cluster_')])
@@ -257,16 +260,14 @@ class ROIFinderBaseClass:
         raise NotImplementedError
 
     def __str__(self):
-        return str(self.__class__.__name__)
+        return self.__class__.__name__
+
 
 class SpectralClustering(ROIFinderBaseClass):
     def __init__(self, volumes=None, mask_img=None, random_seed=None):
         super().__init__(volumes, mask_img, random_seed)
         self.connectivity_matrix = None
         self.adjacency_matrix = None
-
-    # def make_toy_data(self, dim=None):
-    #     print('SubClass toy')
 
     def find_clusters(self):
         if self.n_jobs >= 1:
@@ -314,12 +315,16 @@ class PearsonMerger(ROIFinderBaseClass):
         super().__init__(volumes, mask_img, random_seed)
 
     def find_clusters(self):
+        total_voxels = len(list(np.ndindex(self.volume_shape)))
+        current_voxel = 1
         if self.n_jobs >= 1:
             # iterates over all indices of the volume, returns tuples
             for index in np.ndindex(self.volume_shape):
-                # check if element is not masked
+                print("\rVoxel %s / %s" % (current_voxel, total_voxels), end="")
+                # check that element is not masked
                 if not np.isnan(self.volumes[0][index]):
                     self.compute_clusters(index)
+                current_voxel += 1
         # elif self.n_jobs > 1:
             # figure out multiprocessing if necessary
 
@@ -383,7 +388,7 @@ class PearsonMerger(ROIFinderBaseClass):
         self.metadata['r_thresh'] = self.r_threshold
         self.metadata['p_thresh'] = self.p_threshold
 
-        # filter out cluster smaller than threshold
+        # filter out clusters smaller than threshold
         if self.min_cluster_size is not None:
             self.metadata['min_cluster_size'] = self.min_cluster_size
             # loop over clusters
@@ -392,12 +397,12 @@ class PearsonMerger(ROIFinderBaseClass):
                 cluster_ids = np.where(self.cluster_array == i)
                 # if cluster below limit set it to np.nan in cluster_array
                 if cluster_size < self.min_cluster_size:
-                    cluster_ids = np.where(self.cluster_array == i)
                     self.cluster_array[cluster_ids] = np.nan
                     self.cluster_count -= 1
-                # add entries to metadata dict
-                cluster_id = "size_cluster_%d" % (i)
-                self.metadata[cluster_id] = cluster_size
+                else:
+                    # add entries to metadata dict
+                    cluster_id = "size_cluster_%d" % (i)
+                    self.metadata[cluster_id] = cluster_size
         else:
             for i in range(1, self.cluster_count + 1):
                 cluster_size = np.where(self.cluster_array == i)[0].size
