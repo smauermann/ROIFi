@@ -1,3 +1,4 @@
+import operator
 import os
 from itertools import combinations, product
 from time import localtime, strftime
@@ -315,12 +316,13 @@ class PearsonMerger(ROIFinderBaseClass):
         super().__init__(volumes, mask_img, random_seed)
 
     def find_clusters(self):
-        total_voxels = len(list(np.ndindex(self.volume_shape)))
+        total_voxels = (self.volume_shape[0] * self.volume_shape[1] *
+                        self.volume_shape[2])
         current_voxel = 1
         if self.n_jobs >= 1:
             # iterates over all indices of the volume, returns tuples
             for index in np.ndindex(self.volume_shape):
-                print("\rVoxel %s / %s" % (current_voxel, total_voxels), end="")
+                # print("\rProcessing %s / %s" % (current_voxel, total_voxels), end="")
                 # check that element is not masked
                 if not np.isnan(self.volumes[0][index]):
                     self.compute_clusters(index)
@@ -332,43 +334,76 @@ class PearsonMerger(ROIFinderBaseClass):
         # collect center voxel from all volumes
         center_voxels = self.get_voxels(center_index)
         # get neighboring voxel indices
-        neighbor_indices = self.get_neighbor_indices(center_index)
+        neighbor_indices = self.get_neighbor_indices(center_index, all_directions=True)
         # extract voxel values for neighbors
         neighbor_voxels = self.get_neighbor_voxels(neighbor_indices)
         # Pearson with surrounding voxels
         correlation_scores = self.compute_correlation(center_voxels,
                                                       neighbor_voxels)
-        # write changes to the cluster_array
-        self.update_cluster_array(correlation_scores, center_index,
-                                  neighbor_indices)
+        if correlation_scores is not None:
+            # write changes to the cluster_array
+            self.update_cluster_array(correlation_scores, center_index,
+                                      neighbor_indices)
 
     def compute_correlation(self, center_voxels, neighbor_voxels):
         correlation_scores = dict()
+        # new implementation following Heller et al. 2006
+        # only keep the neighbor with the highest correlation
+        # maybe adjust for distance if looking at all direct neigbors instead
+        # of only the 6 fully touching neigbors
         for key, val in neighbor_voxels.items():
             r, p = pearsonr(center_voxels, val)
-            # filter according to threshold levels for r and p
-            # p values are not entirely reliable according to documentation
-            # only for datasets larger than 500
             if r >= self.r_threshold:
                 if self.p_threshold is not None:
                     if p <= self.p_threshold:
                         correlation_scores[key] = r, p
                 else:
                     correlation_scores[key] = r, p
-        return correlation_scores
+        if correlation_scores:
+            # check if only one entry, then no sorting needed
+            if len(correlation_scores) == 1:
+                # do something
+                return correlation_scores
+            # sort for the highest value of r
+            else:
+                key_highest_r = sorted(correlation_scores.keys(),
+                                       key=lambda k: correlation_scores[k],
+                                       reverse=True)[0]
+                return {key_highest_r: correlation_scores[key_highest_r]}
+        else:
+            return None
+        # my old implementation:
+        # for key, val in neighbor_voxels.items():
+        #     r, p = pearsonr(center_voxels, val)
+        #     # filter according to threshold levels for r and p
+        #     # p values are not entirely reliable according to documentation
+        #     # only for datasets larger than 500
+        #     if r >= self.r_threshold:
+        #         if self.p_threshold is not None:
+        #             if p <= self.p_threshold:
+        #                 correlation_scores[key] = r, p
+        #         else:
+        #             correlation_scores[key] = r, p
+        # # check if dict is not empty
+        # if correlation_scores:
+        #     return correlation_scores
+        # else:
+        #     return None
 
     def update_cluster_array(self, correlation_scores, center_idx,
                              neighbor_indices):
+        #print(correlation_scores)
         for key in correlation_scores.keys():
             index = tuple(neighbor_indices[key])
             # if no cluster is adjacent
             if not self.is_cluster_adjacent(index):
+                #print(center_idx, 'cluster_count + 1', correlation_scores)
                 self.cluster_count += 1
                 self.cluster_array[index] = self.cluster_count
                 self.cluster_array[center_idx] = self.cluster_count
             else:
-                if self.cluster_count == 0:
-                    self.cluster_count = 1
+                #if self.cluster_count == 0:
+                #    self.cluster_count = 1
                 self.cluster_array[index] = self.cluster_count
                 self.cluster_array[center_idx] = self.cluster_count
 
@@ -401,12 +436,12 @@ class PearsonMerger(ROIFinderBaseClass):
                     self.cluster_count -= 1
                 else:
                     # add entries to metadata dict
-                    cluster_id = "size_cluster_%d" % (i)
+                    cluster_id = "size_cluster_%03d" % i
                     self.metadata[cluster_id] = cluster_size
         else:
             for i in range(1, self.cluster_count + 1):
                 cluster_size = np.where(self.cluster_array == i)[0].size
-                cluster_id = "size_cluster_%d" % (i)
+                cluster_id = "size_cluster_%03d" % i
                 self.metadata[cluster_id] = cluster_size
 
         self.metadata['cluster_count'] = self.cluster_count
