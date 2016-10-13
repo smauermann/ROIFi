@@ -1,6 +1,11 @@
 # my test file
 test.py
 
+# images and np arrays
+*.nii.gz
+*.nii
+*.npy
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
